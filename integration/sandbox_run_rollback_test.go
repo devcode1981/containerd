@@ -1,5 +1,4 @@
 //go:build linux
-// +build linux
 
 /*
    Copyright The containerd Authors.
@@ -20,6 +19,7 @@
 package integration
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -31,14 +31,12 @@ import (
 	"testing"
 	"time"
 
-	runtimespec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	criapiv1 "k8s.io/cri-api/pkg/apis/runtime/v1"
 
-	"github.com/containerd/containerd/pkg/cri/store/sandbox"
-	"github.com/containerd/containerd/pkg/failpoint"
-	"github.com/containerd/typeurl"
+	"github.com/containerd/containerd/v2/internal/cri/types"
+	"github.com/containerd/containerd/v2/internal/failpoint"
 )
 
 const (
@@ -66,7 +64,7 @@ func TestRunPodSandboxWithSetupCNIFailure(t *testing.T) {
 	t.Logf("Create a sandbox")
 	_, err := runtimeService.RunPodSandbox(sbConfig, failpointRuntimeHandler)
 	require.Error(t, err)
-	require.Equal(t, true, strings.Contains(err.Error(), "you-shall-not-pass!"))
+	require.ErrorContains(t, err, "you-shall-not-pass!")
 
 	t.Logf("Retry to create sandbox with same config")
 	sb, err := runtimeService.RunPodSandbox(sbConfig, failpointRuntimeHandler)
@@ -94,16 +92,13 @@ func TestRunPodSandboxWithShimStartFailure(t *testing.T) {
 	t.Logf("Create a sandbox")
 	_, err := runtimeService.RunPodSandbox(sbConfig, failpointRuntimeHandler)
 	require.Error(t, err)
-	require.Equal(t, true, strings.Contains(err.Error(), "no hard feelings"))
+	require.ErrorContains(t, err, "no hard feelings")
 }
 
 // TestRunPodSandboxWithShimDeleteFailure should keep the sandbox record if
 // failed to rollback shim by shim.Delete API.
 func TestRunPodSandboxWithShimDeleteFailure(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip()
-	}
-	if os.Getenv("ENABLE_CRI_SANDBOXES") != "" {
 		t.Skip()
 	}
 
@@ -132,16 +127,16 @@ func TestRunPodSandboxWithShimDeleteFailure(t *testing.T) {
 			require.Len(t, l, 1)
 
 			sb := l[0]
-			require.Equal(t, sb.State, criapiv1.PodSandboxState_SANDBOX_NOTREADY)
-			require.Equal(t, sb.Metadata.Name, sbConfig.Metadata.Name)
-			require.Equal(t, sb.Metadata.Namespace, sbConfig.Metadata.Namespace)
-			require.Equal(t, sb.Metadata.Uid, sbConfig.Metadata.Uid)
-			require.Equal(t, sb.Metadata.Attempt, sbConfig.Metadata.Attempt)
+			require.Equal(t, criapiv1.PodSandboxState_SANDBOX_NOTREADY, sb.State)
+			require.Equal(t, sbConfig.Metadata.Name, sb.Metadata.Name)
+			require.Equal(t, sbConfig.Metadata.Namespace, sb.Metadata.Namespace)
+			require.Equal(t, sbConfig.Metadata.Uid, sb.Metadata.Uid)
+			require.Equal(t, sbConfig.Metadata.Attempt, sb.Metadata.Attempt)
 
 			t.Log("Check PodSandboxStatus")
 			sbStatus, err := runtimeService.PodSandboxStatus(sb.Id)
 			require.NoError(t, err)
-			require.Equal(t, sbStatus.State, criapiv1.PodSandboxState_SANDBOX_NOTREADY)
+			require.Equal(t, criapiv1.PodSandboxState_SANDBOX_NOTREADY, sbStatus.State)
 			require.Greater(t, len(sbStatus.Network.Ip), 0)
 
 			if restart {
@@ -152,13 +147,13 @@ func TestRunPodSandboxWithShimDeleteFailure(t *testing.T) {
 				l, err = runtimeService.ListPodSandbox(&criapiv1.PodSandboxFilter{Id: sb.Id})
 				require.NoError(t, err)
 				require.Len(t, l, 1)
-				require.Equal(t, l[0].State, criapiv1.PodSandboxState_SANDBOX_NOTREADY)
+				require.Equal(t, criapiv1.PodSandboxState_SANDBOX_NOTREADY, l[0].State)
 
 				t.Log("Check PodSandboxStatus")
 				sbStatus, err := runtimeService.PodSandboxStatus(sb.Id)
 				require.NoError(t, err)
 				t.Log(sbStatus.Network)
-				require.Equal(t, sbStatus.State, criapiv1.PodSandboxState_SANDBOX_NOTREADY)
+				require.Equal(t, criapiv1.PodSandboxState_SANDBOX_NOTREADY, sbStatus.State)
 			}
 
 			t.Log("Cleanup leaky sandbox")
@@ -175,9 +170,6 @@ func TestRunPodSandboxWithShimDeleteFailure(t *testing.T) {
 // record if failed to rollback CNI API.
 func TestRunPodSandboxWithShimStartAndTeardownCNIFailure(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip()
-	}
-	if os.Getenv("ENABLE_CRI_SANDBOXES") != "" {
 		t.Skip()
 	}
 
@@ -211,11 +203,11 @@ func TestRunPodSandboxWithShimStartAndTeardownCNIFailure(t *testing.T) {
 			require.Len(t, l, 1)
 
 			sb := l[0]
-			require.Equal(t, sb.State, criapiv1.PodSandboxState_SANDBOX_NOTREADY)
-			require.Equal(t, sb.Metadata.Name, sbConfig.Metadata.Name)
-			require.Equal(t, sb.Metadata.Namespace, sbConfig.Metadata.Namespace)
-			require.Equal(t, sb.Metadata.Uid, sbConfig.Metadata.Uid)
-			require.Equal(t, sb.Metadata.Attempt, sbConfig.Metadata.Attempt)
+			require.Equal(t, criapiv1.PodSandboxState_SANDBOX_NOTREADY, sb.State)
+			require.Equal(t, sbConfig.Metadata.Name, sb.Metadata.Name)
+			require.Equal(t, sbConfig.Metadata.Namespace, sb.Metadata.Namespace)
+			require.Equal(t, sbConfig.Metadata.Uid, sb.Metadata.Uid)
+			require.Equal(t, sbConfig.Metadata.Attempt, sb.Metadata.Attempt)
 
 			if restart {
 				t.Log("Restart containerd")
@@ -225,7 +217,7 @@ func TestRunPodSandboxWithShimStartAndTeardownCNIFailure(t *testing.T) {
 				l, err = runtimeService.ListPodSandbox(&criapiv1.PodSandboxFilter{Id: sb.Id})
 				require.NoError(t, err)
 				require.Len(t, l, 1)
-				require.Equal(t, l[0].State, criapiv1.PodSandboxState_SANDBOX_NOTREADY)
+				require.Equal(t, criapiv1.PodSandboxState_SANDBOX_NOTREADY, l[0].State)
 			}
 
 			t.Log("Cleanup leaky sandbox")
@@ -241,9 +233,6 @@ func TestRunPodSandboxWithShimStartAndTeardownCNIFailure(t *testing.T) {
 // record if failed to rollback CNI API.
 func TestRunPodSandboxAndTeardownCNISlow(t *testing.T) {
 	if runtime.GOOS != "linux" {
-		t.Skip()
-	}
-	if os.Getenv("ENABLE_CRI_SANDBOXES") != "" {
 		t.Skip()
 	}
 
@@ -295,37 +284,39 @@ func TestRunPodSandboxAndTeardownCNISlow(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	assert.Equal(t, sb.State, criapiv1.PodSandboxState_SANDBOX_NOTREADY)
-	assert.Equal(t, sb.Metadata.Name, sbConfig.Metadata.Name)
-	assert.Equal(t, sb.Metadata.Namespace, sbConfig.Metadata.Namespace)
-	assert.Equal(t, sb.Metadata.Uid, sbConfig.Metadata.Uid)
-	assert.Equal(t, sb.Metadata.Attempt, sbConfig.Metadata.Attempt)
+	assert.Equal(t, criapiv1.PodSandboxState_SANDBOX_NOTREADY, sb.State)
+	assert.Equal(t, sbConfig.Metadata.Name, sb.Metadata.Name)
+	assert.Equal(t, sbConfig.Metadata.Namespace, sb.Metadata.Namespace)
+	assert.Equal(t, sbConfig.Metadata.Uid, sb.Metadata.Uid)
+	assert.Equal(t, sbConfig.Metadata.Attempt, sb.Metadata.Attempt)
 
-	t.Log("Get sandbox info")
-	_, info, err := SandboxInfo(sb.Id)
+	t.Log("Get sandbox info (sbserver)")
+	_, info, err := sbserverSandboxInfo(sb.Id)
 	require.NoError(t, err)
 	require.False(t, info.NetNSClosed)
 
-	var netNS string
-	for _, n := range info.RuntimeSpec.Linux.Namespaces {
-		if n.Type == runtimespec.NetworkNamespace {
-			netNS = n.Path
-		}
-	}
-	assert.NotEmpty(t, netNS, "network namespace should be set")
+	assert.NotEmpty(t, info.Metadata.NetNSPath, "network namespace should be set")
+}
 
-	t.Log("Get sandbox container")
-	c, err := GetContainer(sb.Id)
-	require.NoError(t, err)
-	any, ok := c.Extensions["io.cri-containerd.sandbox.metadata"]
-	require.True(t, ok, "sandbox metadata should exist in extension")
-	i, err := typeurl.UnmarshalAny(any)
-	require.NoError(t, err)
-	require.IsType(t, &sandbox.Metadata{}, i)
-	metadata, ok := i.(*sandbox.Metadata)
-	require.True(t, ok)
-	assert.NotEmpty(t, metadata.NetNSPath)
-	assert.Equal(t, netNS, metadata.NetNSPath, "network namespace path should be the same in runtime spec and sandbox metadata")
+// sbserverSandboxInfo gets sandbox info.
+func sbserverSandboxInfo(id string) (*criapiv1.PodSandboxStatus, *types.SandboxInfo, error) {
+	client, err := RawRuntimeClient()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get raw runtime client: %w", err)
+	}
+	resp, err := client.PodSandboxStatus(context.Background(), &criapiv1.PodSandboxStatusRequest{
+		PodSandboxId: id,
+		Verbose:      true,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get sandbox status: %w", err)
+	}
+	status := resp.GetStatus()
+	var info types.SandboxInfo
+	if err := json.Unmarshal([]byte(resp.GetInfo()["info"]), &info); err != nil {
+		return nil, nil, fmt.Errorf("failed to unmarshal sandbox info: %w", err)
+	}
+	return status, &info, nil
 }
 
 func ensureCNIAddRunning(t *testing.T, sbName string) error {
@@ -349,12 +340,7 @@ func ensureCNIAddRunning(t *testing.T, sbName string) error {
 			}
 
 			for _, arg := range strings.Split(args, ";") {
-				kv := strings.SplitN(arg, "=", 2)
-				if len(kv) != 2 {
-					continue
-				}
-
-				if kv[0] == "K8S_POD_NAME" && kv[1] == sbName {
+				if arg == "K8S_POD_NAME="+sbName {
 					return true, nil
 				}
 			}
